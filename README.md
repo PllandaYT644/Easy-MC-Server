@@ -9,7 +9,7 @@ made for people in termux and wants to make a minecraft server
 
 how to get (make sure u installed git)
 ```
-git clone https://github.com/PllandaYT644/Easy-MC-Server/edit/main/README.md
+git clone https://github.com/PllandaYT644/Easy-MC-Server/
 ```
 
 how to run (make sure that the directory has the file)
