@@ -22,3 +22,5 @@ how to add mods (make sure that you are in the server folder, you can use ls and
 ```
 ./add-mods.sh
 ```
+
+this is made by ai (specifically gemini)
