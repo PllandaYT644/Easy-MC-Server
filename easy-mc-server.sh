@@ -4,19 +4,23 @@
 # Easy MC Server Installer (Arch, Ubuntu, Fedora Supported)
 # ==========================================================
 
-# --- 1. Auto-Updater (Fix for local changes) ---
+# --- 1. Fixed Auto-Updater (Prevents Infinite Loop) ---
 if [ -d ".git" ]; then
     echo "Checking for updates..."
     # Stash local changes to prevent merge errors
     git stash push -m "Auto-update stash" > /dev/null 2>&1
     
-    if git pull origin main; then
+    # Capture the output of the pull command
+    UPDATE_OUTPUT=$(git pull origin main 2>&1)
+    
+    # Check if the output actually says it updated something
+    if [[ "$UPDATE_OUTPUT" == *"Already up to date."* ]]; then
+        echo "Program is already up to date."
+    else
         echo "Update successful! Restarting script..."
         chmod +x "$0"
         exec "$0" "$@"
         exit
-    else
-        echo "Update failed (Internet issues?). Continuing with current version..."
     fi
 fi
 
@@ -52,7 +56,6 @@ case $OS in
         [ -n "$MISSING" ] && apt install -y $MISSING
         ;;
     "Fedora")
-        # Fedora might need 'findutils' for 'find', usually installed though.
         dnf check-update
         MISSING=""
         for d in $DEPS; do command -v $d &>/dev/null || MISSING="$MISSING $d"; done
@@ -185,7 +188,6 @@ elif [ "$OS" == "Fedora" ]; then
     fi
     
     # Switch via alternatives (Fedora/RHEL style)
-    # Finding the specific binary path is often safer than guessing the alias name
     JAVA_PATH=$(alternatives --list | grep "java " | grep "$REQ_JAVA" | head -n 1 | awk '{print $3}')
     
     # Fallback search if alternatives list is messy
