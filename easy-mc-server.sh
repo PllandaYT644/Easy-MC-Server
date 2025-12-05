@@ -14,9 +14,9 @@ echo "Updating system package database..."
 pacman -Sy
 
 echo "Checking dependencies..."
-# Added 'unzip' and 'file' to dependencies
+# Added 'unzip' to read jar files
 NEEDED_DEPS=""
-for dep in wget jq unzip git file; do
+for dep in wget jq unzip git; do
     if ! command -v $dep &> /dev/null; then
         NEEDED_DEPS="$NEEDED_DEPS $dep"
     fi
@@ -25,12 +25,6 @@ done
 if [ -n "$NEEDED_DEPS" ]; then
     echo "Installing missing dependencies:$NEEDED_DEPS"
     pacman -S --noconfirm $NEEDED_DEPS
-fi
-
-# Ensure basic Java is present to start with
-if ! pacman -Qs jre-openjdk-headless > /dev/null; then
-    echo "Installing default Java..."
-    pacman -S --noconfirm jre-openjdk-headless
 fi
 
 # --- 2. User Selection ---
@@ -48,7 +42,7 @@ SERVER_Folder=""
 TYPE=""
 DOWNLOAD_URL=""
 
-# Helper: Get Vanilla URL
+# Helper: Get Vanilla URL from Mojang API
 get_vanilla_url() {
     local version_id=$1
     local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
@@ -106,8 +100,8 @@ cd "$SERVER_Folder"
 echo "Downloading server jar..."
 wget -q --show-progress -O "$SERVER_JAR" "$DOWNLOAD_URL"
 
-# --- 3. Java Version Detection & Installation ---
-echo "Detecting required Java version..."
+# --- 3. Java Version Detection & Management ---
+echo "Detecting required Java version from Jar..."
 
 # Extract a class file to read bytecode
 CLASS_FILE=$(unzip -l "$SERVER_JAR" | grep ".class" | head -n 1 | awk '{print $4}')
@@ -116,44 +110,45 @@ unzip -p "$SERVER_JAR" "$CLASS_FILE" > temp.class
 CLASS_VER=$(od -j 7 -N 1 -t u1 temp.class | head -n 1 | awk '{print $2}')
 rm temp.class
 
-JAVA_PKG=""
+JAVA_ENV_NAME=""
+PKG_NAME=""
 
 if [ "$CLASS_VER" -ge 65 ]; then
     echo "Detected: Java 21 required."
-    JAVA_PKG="jre21-openjdk-headless"
+    JAVA_ENV_NAME="java-21-openjdk"
+    PKG_NAME="jre21-openjdk-headless"
 elif [ "$CLASS_VER" -ge 61 ]; then
     echo "Detected: Java 17 required."
-    JAVA_PKG="jre17-openjdk-headless"
+    JAVA_ENV_NAME="java-17-openjdk"
+    PKG_NAME="jre17-openjdk-headless"
 elif [ "$CLASS_VER" -ge 52 ]; then
     echo "Detected: Java 8 required."
-    JAVA_PKG="jre8-openjdk-headless"
+    JAVA_ENV_NAME="java-8-openjdk"
+    PKG_NAME="jre8-openjdk-headless"
 else
     echo "Could not detect version. Defaulting to Java 21."
-    JAVA_PKG="jre21-openjdk-headless"
+    JAVA_ENV_NAME="java-21-openjdk"
+    PKG_NAME="jre21-openjdk-headless"
 fi
 
-# Install Java Package
-if ! pacman -Qs $JAVA_PKG > /dev/null; then
-    echo "Installing $JAVA_PKG..."
-    pacman -S --noconfirm $JAVA_PKG || { echo "Failed to install Java. Exiting."; exit 1; }
+# Check if installed
+if pacman -Qs "$PKG_NAME" > /dev/null; then
+    echo "Good news! $PKG_NAME is already installed. Skipping download."
+else
+    echo "$PKG_NAME not found. Installing now..."
+    pacman -S --noconfirm "$PKG_NAME" || { echo "Failed to install Java."; exit 1; }
 fi
 
-# FIX: Dynamic Path Detection
-# We ask pacman where it put the binary instead of guessing
-echo "Locating Java binary..."
-JAVA_BIN=$(pacman -Ql $JAVA_PKG | grep -E '/bin/java$' | head -n 1)
+# Switch System Java
+echo "Switching system default to $JAVA_ENV_NAME..."
+archlinux-java set "$JAVA_ENV_NAME"
 
-if [ -z "$JAVA_BIN" ] || [ ! -f "$JAVA_BIN" ]; then
-    echo "Error: Could not find java binary for $JAVA_PKG."
-    echo "Falling back to system default 'java' (Check 'archlinux-java status' if this fails)."
-    JAVA_BIN="java"
-fi
-
-echo "Using Java executable: $JAVA_BIN"
+echo "Current Java Version:"
+java -version 2>&1 | head -n 1
 
 # --- 4. EULA ---
 echo "Running server to generate EULA..."
-"$JAVA_BIN" -Xmx512M -Xms512M -jar "$SERVER_JAR" nogui &
+java -Xmx512M -Xms512M -jar "$SERVER_JAR" nogui &
 PID=$!
 wait $PID
 
@@ -164,7 +159,7 @@ fi
 
 # --- 5. Generate Files & Stop ---
 echo "Starting server to generate files (Waiting for 'Done')..."
-"$JAVA_BIN" -Xmx1G -Xms1G -jar "$SERVER_JAR" nogui > server_log.txt 2>&1 &
+java -Xmx1G -Xms1G -jar "$SERVER_JAR" nogui > server_log.txt 2>&1 &
 SERVER_PID=$!
 
 echo "Waiting for start..."
@@ -192,7 +187,7 @@ if [[ "$TYPE" == "Paper" || "$TYPE" == "Purpur" ]]; then
     read -p "Install plugins? (y/n): " PLUG_OPT
     if [[ "$PLUG_OPT" == "y" || "$PLUG_OPT" == "Y" ]]; then
         echo "Enter plugin URLs separated by spaces."
-        echo "Example: https://link1.jar https://link2.jar"
+        echo "Example: https://site.com/plugin1.jar https://site.com/plugin2.jar"
         echo "Type 'done' when finished."
         
         while true; do
@@ -221,11 +216,11 @@ echo "Detected RAM: ${TOTAL_MEM_MB}MB. Recommended: ${REC_MEM}MB"
 read -p "Enter RAM (MB): " USER_RAM
 [ -z "$USER_RAM" ] && USER_RAM=$REC_MEM
 
-# Generate run.sh
+# Generate run.sh (Uses 'java' directly now)
 echo "Creating run.sh..."
 cat <<EOF > run.sh
 #!/bin/bash
-"$JAVA_BIN" -Xmx${USER_RAM}M -Xms${USER_RAM}M -jar $SERVER_JAR nogui
+java -Xmx${USER_RAM}M -Xms${USER_RAM}M -jar $SERVER_JAR nogui
 EOF
 chmod +x run.sh
 
@@ -258,5 +253,4 @@ echo "------------------------------------------------"
 echo "Setup Complete!"
 echo "Run server: ./run.sh"
 echo "Add addons: ./add-mods.sh"
-echo "Java Path: $JAVA_BIN"
 echo "------------------------------------------------"
