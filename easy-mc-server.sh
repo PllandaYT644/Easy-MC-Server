@@ -7,16 +7,16 @@
 # --- 1. Initial Setup & Updates ---
 echo "Checking for program updates..."
 if [ -d ".git" ]; then
-    echo "Git repository detected. Pulling updates..."
-    git pull origin main || echo "Failed to pull updates."
+    git pull origin main || echo "Git pull failed (ignoring)."
 fi
 
 echo "Updating system package database..."
 pacman -Sy
 
-echo "Checking dependencies (wget, jq, unzip, git)..."
+echo "Checking dependencies..."
+# Added 'unzip' and 'file' to dependencies
 NEEDED_DEPS=""
-for dep in wget jq unzip git; do
+for dep in wget jq unzip git file; do
     if ! command -v $dep &> /dev/null; then
         NEEDED_DEPS="$NEEDED_DEPS $dep"
     fi
@@ -27,10 +27,10 @@ if [ -n "$NEEDED_DEPS" ]; then
     pacman -S --noconfirm $NEEDED_DEPS
 fi
 
-# Install Java 21 initially as requested (default fallback)
-if ! pacman -Qs jre21-openjdk-headless > /dev/null; then
-    echo "Installing default Java 21..."
-    pacman -S --noconfirm jre21-openjdk-headless
+# Ensure basic Java is present to start with
+if ! pacman -Qs jre-openjdk-headless > /dev/null; then
+    echo "Installing default Java..."
+    pacman -S --noconfirm jre-openjdk-headless
 fi
 
 # --- 2. User Selection ---
@@ -48,7 +48,7 @@ SERVER_Folder=""
 TYPE=""
 DOWNLOAD_URL=""
 
-# Function: Get Vanilla URL
+# Helper: Get Vanilla URL
 get_vanilla_url() {
     local version_id=$1
     local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
@@ -94,7 +94,6 @@ case $CHOICE in
     *) echo "Invalid option."; exit 1 ;;
 esac
 
-# Create Directory
 if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
     echo "Failed to get download URL."
     exit 1
@@ -110,39 +109,44 @@ wget -q --show-progress -O "$SERVER_JAR" "$DOWNLOAD_URL"
 # --- 3. Java Version Detection & Installation ---
 echo "Detecting required Java version..."
 
-# Extract a class file to read the bytecode version
-# 65 = Java 21, 61 = Java 17, 60 = Java 16, 52 = Java 8
+# Extract a class file to read bytecode
 CLASS_FILE=$(unzip -l "$SERVER_JAR" | grep ".class" | head -n 1 | awk '{print $4}')
 unzip -p "$SERVER_JAR" "$CLASS_FILE" > temp.class
-# Read the Major Version byte (offset 7)
+# Read Major Version byte
 CLASS_VER=$(od -j 7 -N 1 -t u1 temp.class | head -n 1 | awk '{print $2}')
 rm temp.class
 
 JAVA_PKG=""
-JAVA_BIN=""
 
 if [ "$CLASS_VER" -ge 65 ]; then
     echo "Detected: Java 21 required."
     JAVA_PKG="jre21-openjdk-headless"
-    JAVA_BIN="/usr/lib/jvm/java-21-openjdk/bin/java"
 elif [ "$CLASS_VER" -ge 61 ]; then
     echo "Detected: Java 17 required."
     JAVA_PKG="jre17-openjdk-headless"
-    JAVA_BIN="/usr/lib/jvm/java-17-openjdk/bin/java"
 elif [ "$CLASS_VER" -ge 52 ]; then
     echo "Detected: Java 8 required."
     JAVA_PKG="jre8-openjdk-headless"
-    JAVA_BIN="/usr/lib/jvm/java-8-openjdk/bin/java"
 else
     echo "Could not detect version. Defaulting to Java 21."
     JAVA_PKG="jre21-openjdk-headless"
-    JAVA_BIN="/usr/lib/jvm/java-21-openjdk/bin/java"
 fi
 
-# Install the specific Java version if missing
-if [ ! -f "$JAVA_BIN" ]; then
+# Install Java Package
+if ! pacman -Qs $JAVA_PKG > /dev/null; then
     echo "Installing $JAVA_PKG..."
     pacman -S --noconfirm $JAVA_PKG || { echo "Failed to install Java. Exiting."; exit 1; }
+fi
+
+# FIX: Dynamic Path Detection
+# We ask pacman where it put the binary instead of guessing
+echo "Locating Java binary..."
+JAVA_BIN=$(pacman -Ql $JAVA_PKG | grep -E '/bin/java$' | head -n 1)
+
+if [ -z "$JAVA_BIN" ] || [ ! -f "$JAVA_BIN" ]; then
+    echo "Error: Could not find java binary for $JAVA_PKG."
+    echo "Falling back to system default 'java' (Check 'archlinux-java status' if this fails)."
+    JAVA_BIN="java"
 fi
 
 echo "Using Java executable: $JAVA_BIN"
@@ -170,8 +174,8 @@ while true; do
         break
     fi
     if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "Server crashed. Check server_log.txt"
-        cat server_log.txt
+        echo "Server stopped/crashed. Checking log..."
+        tail -n 10 server_log.txt
         exit 1
     fi
     sleep 2
@@ -181,17 +185,29 @@ kill $SERVER_PID
 wait $SERVER_PID 2>/dev/null
 echo "Server stopped."
 
-# --- 6. Plugins ---
+# --- 6. Plugins (Multiple Support) ---
 if [[ "$TYPE" == "Paper" || "$TYPE" == "Purpur" ]]; then
     mkdir -p plugins
     echo "------------------------------------------------"
     read -p "Install plugins? (y/n): " PLUG_OPT
     if [[ "$PLUG_OPT" == "y" || "$PLUG_OPT" == "Y" ]]; then
-        echo "Enter plugin URLs (type 'done' to finish):"
+        echo "Enter plugin URLs separated by spaces."
+        echo "Example: https://link1.jar https://link2.jar"
+        echo "Type 'done' when finished."
+        
         while true; do
-            read -p "URL: " P_URL
-            [[ "$P_URL" == "done" ]] && break
-            [[ -n "$P_URL" ]] && wget -P plugins/ "$P_URL"
+            read -p "URL(s): " INPUT_URLS
+            if [[ "$INPUT_URLS" == "done" ]]; then
+                break
+            fi
+            
+            # Loop through all space-separated links
+            for URL in $INPUT_URLS; do
+                if [[ -n "$URL" ]]; then
+                    echo "Downloading: $URL"
+                    wget -q --show-progress -P plugins/ "$URL"
+                fi
+            done
         done
     fi
 fi
@@ -205,7 +221,7 @@ echo "Detected RAM: ${TOTAL_MEM_MB}MB. Recommended: ${REC_MEM}MB"
 read -p "Enter RAM (MB): " USER_RAM
 [ -z "$USER_RAM" ] && USER_RAM=$REC_MEM
 
-# Generate run.sh with SPECIFIC Java path
+# Generate run.sh
 echo "Creating run.sh..."
 cat <<EOF > run.sh
 #!/bin/bash
@@ -213,7 +229,7 @@ cat <<EOF > run.sh
 EOF
 chmod +x run.sh
 
-# Generate add-mods.sh
+# Generate add-mods.sh (With Multiple Link Support)
 TARGET_DIR="mods"
 [[ -d "plugins" ]] && TARGET_DIR="plugins"
 
@@ -221,11 +237,19 @@ cat <<EOF > add-mods.sh
 #!/bin/bash
 TARGET="$TARGET_DIR"
 mkdir -p \$TARGET
-echo "Enter download link (or 'exit'):"
-read URL
-if [ "\$URL" != "exit" ] && [ -n "\$URL" ]; then
-    wget -P \$TARGET "\$URL"
-    echo "Downloaded to \$TARGET"
+
+echo "Paste download links separated by spaces (e.g., link1 link2 link3):"
+echo "Or type 'exit' to quit."
+read -r ALL_URLS
+
+if [ "\$ALL_URLS" != "exit" ] && [ -n "\$ALL_URLS" ]; then
+    for URL in \$ALL_URLS; do
+        echo "Downloading: \$URL"
+        wget -q --show-progress -P \$TARGET "\$URL"
+    done
+    echo "All downloads complete."
+else
+    echo "Cancelled."
 fi
 EOF
 chmod +x add-mods.sh
@@ -234,5 +258,5 @@ echo "------------------------------------------------"
 echo "Setup Complete!"
 echo "Run server: ./run.sh"
 echo "Add addons: ./add-mods.sh"
-echo "Java Version Used: $JAVA_PKG"
+echo "Java Path: $JAVA_BIN"
 echo "------------------------------------------------"
