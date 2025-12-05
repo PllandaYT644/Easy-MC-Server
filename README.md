@@ -4,7 +4,7 @@ made for people in termux and wants to make a minecraft server
 
 | Distro  | Works? |
 | ------------- | ------------- |
-| Arch Linux  | ✅ Works  |
+| Arch Linux  | ❓ Not Tested (testing now)  |
 | Ubuntu  | ❓ Not Tested  |
 
 how to get (make sure u installed git)
