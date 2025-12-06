@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # ==========================================================
-# Easy MC Server Installer (Premium Edition)
+# Easy MC Server Installer (Clean Dashboard Edition)
 # Arch (Termux), Ubuntu, Fedora Supported
 # ==========================================================
 
-# --- 1. Fixed Auto-Updater ---
+# --- 1. Auto-Updater ---
 if [ -d ".git" ]; then
     echo "Checking for updates..."
     git stash push -m "Auto-update stash" > /dev/null 2>&1
@@ -28,10 +28,9 @@ elif command -v dnf &> /dev/null; then OS="Fedora";
 else echo "Error: OS not supported."; exit 1; fi
 
 echo "Detected OS: $OS"
-echo "Checking dependencies (including Python for the Dashboard)..."
+echo "Checking dependencies..."
 
-# Added 'python' or 'python3' for the dashboard TUI
-DEPS="wget jq unzip git file python"
+DEPS="wget jq unzip git file python3"
 case $OS in
     "Arch")
         pacman -Sy
@@ -157,7 +156,6 @@ fi
 echo "Generating properties files..."
 java -Xmx1024M -Xms1024M -jar "$SERVER_JAR" nogui > server_log.txt 2>&1 &
 PID=$!
-# Wait for "Done" or "For help"
 count=0
 while [ $count -lt 30 ]; do
     if grep -qE "Done|For help" server_log.txt; then break; fi
@@ -170,10 +168,9 @@ wait $PID 2>/dev/null
 # --- 7. Server Properties Wizard ---
 echo ""
 echo "========================================"
-echo "   SERVER CONFIGURATION (Easy Mode)"
+echo "   SERVER CONFIGURATION"
 echo "========================================"
 
-# Function to edit property
 set_prop() {
     local key=$1
     local value=$2
@@ -212,9 +209,6 @@ read -p "Enable PVP? (y/n - Default: y): " PROP_PVP
 read -p "Online Mode (True=Premium, False=Cracked) (y/n - Default: y): " PROP_ONLINE
 [[ "$PROP_ONLINE" == "n" ]] && set_prop "online-mode" "false" || set_prop "online-mode" "true"
 
-read -p "Allow Cracked/White-list? (y/n - Default: n): " PROP_WL
-[[ "$PROP_WL" == "y" ]] && set_prop "white-list" "true" || set_prop "white-list" "false"
-
 # --- 8. Plugins & RAM ---
 if [[ "$TYPE" == "Paper" || "$TYPE" == "Purpur" ]]; then
     mkdir -p plugins
@@ -237,86 +231,140 @@ echo "Detected RAM: ${TOTAL_MEM}MB"
 read -p "Allocated RAM (MB) [Default: $REC_MEM]: " USER_RAM
 [ -z "$USER_RAM" ] && USER_RAM=$REC_MEM
 
-# --- 9. Create Dashboard (Python TUI) ---
+# --- 9. Create Dashboard (Fixed Input Line) ---
 cat <<EOF > console.py
-import subprocess, threading, time, sys, os, re
+import subprocess, threading, time, sys, os, shutil
 
-# Config
+# Configuration
 RAM_MB = $USER_RAM
 JAR_FILE = "$SERVER_JAR"
 SERVER_NAME = "$PROP_MOTD"
 MAX_PLAYERS = "$PROP_MAX"
 GAMEMODE = "$PROP_GM"
 
-# Command to run java
 cmd = ["java", "-Xmx"+str(RAM_MB)+"M", "-Xms"+str(RAM_MB)+"M", "-jar", JAR_FILE, "nogui"]
 
-# Global Vars
-process = None
 running = True
 player_count = 0
-ram_usage_display = 0.0
 
-def get_ram_usage():
-    # Simple calculation based on allocation vs approximate system usage 
-    # (Since strict java heap monitoring requires jstat, we simulate visualization)
-    return 0 
+# --- TERMINAL CONTROL ---
+# Uses ANSI escape codes to create a scrolling region in the middle
+# while keeping Header at top and Input at bottom.
 
-def header_thread():
+def get_term_size():
+    return shutil.get_terminal_size((80, 24))
+
+def setup_screen():
+    cols, rows = get_term_size()
+    sys.stdout.write("\033[2J") # Clear Screen
+    sys.stdout.write("\033[H")  # Home Cursor
+    # Header is 6 lines. Input is bottom line.
+    # Scroll region: Row 7 to Row (Height - 1)
+    sys.stdout.write(f"\033[7;{rows-1}r") 
+    sys.stdout.flush()
+
+def reset_screen():
+    sys.stdout.write("\033[r") # Reset scroll region
+    sys.stdout.write("\033[2J")
+    sys.stdout.write("\033[H")
+    sys.stdout.flush()
+
+def draw_header():
+    # Save cursor, Move Home, Draw, Restore
+    cols, rows = get_term_size()
+    
+    # Fake RAM bar
+    bar_len = 20
+    filled = int(bar_len * 0.7)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    
+    header = (
+        f"\033[s\033[H\033[KServer Name = \033[1m{SERVER_NAME}\033[0m\n"
+        f"\033[KPlayers     = {player_count}/{MAX_PLAYERS}\n"
+        f"\033[KGamemode    = {GAMEMODE}\n"
+        f"\033[K\n"
+        f"\033[KRAM         = [\033[92m{bar}\033[0m] {RAM_MB}MB\n"
+        f"\033[K" + ("-" * cols) + "\033[u"
+    )
+    sys.stdout.write(header)
+    sys.stdout.flush()
+
+def draw_input_line():
+    # Move to bottom row
+    cols, rows = get_term_size()
+    # Save cursor, Move to bottom, Draw Prompt, Restore
+    # We clear the line first
+    sys.stdout.write(f"\033[s\033[{rows};0H\033[K\033[1m>\033[0m \033[u")
+    sys.stdout.flush()
+
+def header_loop():
     while running:
-        # Move cursor to top left
-        sys.stdout.write("\033[H") 
-        
-        # Calculate Bar
-        bar_len = 20
-        # Simulated "usage" for visual flair (Java usually takes full Xms at start)
-        filled = int(bar_len * 0.8) 
-        bar = "█" * filled + "░" * (bar_len - filled)
-        
-        # Colors: \033[92m = Green, \033[96m = Cyan, \033[0m = Reset
-        print(f"\033[KServer Name = \033[1m{SERVER_NAME}\033[0m")
-        print(f"\033[KPlayers     = {player_count}/{MAX_PLAYERS}")
-        print(f"\033[KGamemode    = {GAMEMODE}")
-        print(f"\033[K")
-        print(f"\033[KRAM  = [\033[92m{bar}\033[0m] {RAM_MB}MB Alloc")
-        print(f"\033[KTPS  = [ \033[92m20.0\033[0m ] (Est)") 
-        print(f"\033[KMSPT = [ \033[92m~50ms\033[0m] (Est)")
-        print(f"\033[K" + "-"*40)
-        
+        draw_header()
         time.sleep(1)
 
 def output_reader(proc):
-    global player_count
+    global player_count, running
+    
     for line in iter(proc.stdout.readline, ''):
         line = line.strip()
         if not line: continue
         
-        # Simple Regex for players
+        # Simple stats
         if "joined the game" in line: player_count += 1
         if "left the game" in line: player_count = max(0, player_count - 1)
         
-        # Print log line in scroll area
-        # Clear line -> Print -> Reset
-        sys.stdout.write(f"\r\033[K{line}\n> ") 
-    global running
+        # Print Log
+        # Because we set the scroll region, we just print normally.
+        # But we must ensure we are inside the scroll region?
+        # Actually, simply printing with \\n at the end of the scroll region triggers scroll.
+        # But to be safe and avoid cursor jumping:
+        # Save Cursor -> Move to bottom of scroll region -> Print -> Restore
+        
+        # Actually, simpler:
+        # Just write the line. Since scroll region is active, 
+        # as long as cursor is inside it, it works.
+        # But the cursor is usually sitting at the prompt (bottom).
+        # So: Save -> Move to (Rows-2) -> Print -> Restore
+        
+        cols, rows = get_term_size()
+        
+        # 1. Save cursor position (which is at the input line)
+        # 2. Move cursor to the last line of the LOG area (rows - 1)
+        # 3. Print line (this forces scroll up)
+        # 4. Restore cursor to input line
+        
+        sys.stdout.write(f"\0337\033[{rows-1};0H\n{line}\0338")
+        sys.stdout.flush()
+        
     running = False
 
 def input_reader(proc):
+    cols, rows = get_term_size()
+    # Move cursor to bottom initially
+    sys.stdout.write(f"\033[{rows};3H") 
+    sys.stdout.flush()
+    
     while running:
         try:
+            # We use standard input(). 
+            # Because logs print via escape codes that jump away and back,
+            # typing should be mostly uninterrupted visually.
             cmd_in = input()
+            
+            # After pressing enter, input() prints a newline, messing up layout.
+            # We move cursor back up and clear the input line manually.
+            sys.stdout.write(f"\033[{rows};0H\033[K\033[1m>\033[0m ")
+            
             if cmd_in.strip():
-                # Move cursor up one line to overwrite the input echo
-                sys.stdout.write("\033[F\033[K")
                 proc.stdin.write(cmd_in + "\n")
                 proc.stdin.flush()
         except EOFError:
             break
 
 try:
-    # Clear Screen
-    os.system('clear')
-    print("Starting Server...")
+    setup_screen()
+    draw_header()
+    draw_input_line()
     
     process = subprocess.Popen(
         cmd, 
@@ -328,25 +376,26 @@ try:
     )
     
     t_out = threading.Thread(target=output_reader, args=(process,))
-    t_in = threading.Thread(target=input_reader, args=(process,))
-    t_head = threading.Thread(target=header_thread)
+    t_head = threading.Thread(target=header_loop)
     
     t_out.daemon = True
-    t_in.daemon = True
     t_head.daemon = True
     
     t_out.start()
-    t_in.start()
     t_head.start()
+    
+    input_reader(process)
     
     process.wait()
 
 except KeyboardInterrupt:
-    print("\nStopping server...")
     if process:
         process.stdin.write("stop\n")
         process.stdin.flush()
         process.wait()
+finally:
+    reset_screen()
+    print("Server Stopped.")
 EOF
 
 # --- 10. Helper Scripts ---
@@ -378,6 +427,5 @@ chmod +x add-mods.sh
 echo "------------------------------------------------"
 echo "INSTALLATION COMPLETE!"
 echo "Folder: $FINAL_FOLDER"
-echo "Type:   cd $FINAL_FOLDER"
 echo "Run:    ./run.sh"
 echo "------------------------------------------------"
