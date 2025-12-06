@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================================
-# Easy MC Server Installer (Clean Dashboard Edition)
+# Easy MC Server Installer (Clean Dashboard + Auto Clear)
 # Arch (Termux), Ubuntu, Fedora Supported
 # ==========================================================
 
@@ -247,10 +247,6 @@ cmd = ["java", "-Xmx"+str(RAM_MB)+"M", "-Xms"+str(RAM_MB)+"M", "-jar", JAR_FILE,
 running = True
 player_count = 0
 
-# --- TERMINAL CONTROL ---
-# Uses ANSI escape codes to create a scrolling region in the middle
-# while keeping Header at top and Input at bottom.
-
 def get_term_size():
     return shutil.get_terminal_size((80, 24))
 
@@ -258,7 +254,6 @@ def setup_screen():
     cols, rows = get_term_size()
     sys.stdout.write("\033[2J") # Clear Screen
     sys.stdout.write("\033[H")  # Home Cursor
-    # Header is 6 lines. Input is bottom line.
     # Scroll region: Row 7 to Row (Height - 1)
     sys.stdout.write(f"\033[7;{rows-1}r") 
     sys.stdout.flush()
@@ -270,10 +265,7 @@ def reset_screen():
     sys.stdout.flush()
 
 def draw_header():
-    # Save cursor, Move Home, Draw, Restore
     cols, rows = get_term_size()
-    
-    # Fake RAM bar
     bar_len = 20
     filled = int(bar_len * 0.7)
     bar = "█" * filled + "░" * (bar_len - filled)
@@ -290,10 +282,7 @@ def draw_header():
     sys.stdout.flush()
 
 def draw_input_line():
-    # Move to bottom row
     cols, rows = get_term_size()
-    # Save cursor, Move to bottom, Draw Prompt, Restore
-    # We clear the line first
     sys.stdout.write(f"\033[s\033[{rows};0H\033[K\033[1m>\033[0m \033[u")
     sys.stdout.flush()
 
@@ -304,57 +293,25 @@ def header_loop():
 
 def output_reader(proc):
     global player_count, running
-    
     for line in iter(proc.stdout.readline, ''):
         line = line.strip()
         if not line: continue
-        
-        # Simple stats
         if "joined the game" in line: player_count += 1
         if "left the game" in line: player_count = max(0, player_count - 1)
         
-        # Print Log
-        # Because we set the scroll region, we just print normally.
-        # But we must ensure we are inside the scroll region?
-        # Actually, simply printing with \\n at the end of the scroll region triggers scroll.
-        # But to be safe and avoid cursor jumping:
-        # Save Cursor -> Move to bottom of scroll region -> Print -> Restore
-        
-        # Actually, simpler:
-        # Just write the line. Since scroll region is active, 
-        # as long as cursor is inside it, it works.
-        # But the cursor is usually sitting at the prompt (bottom).
-        # So: Save -> Move to (Rows-2) -> Print -> Restore
-        
         cols, rows = get_term_size()
-        
-        # 1. Save cursor position (which is at the input line)
-        # 2. Move cursor to the last line of the LOG area (rows - 1)
-        # 3. Print line (this forces scroll up)
-        # 4. Restore cursor to input line
-        
         sys.stdout.write(f"\0337\033[{rows-1};0H\n{line}\0338")
         sys.stdout.flush()
-        
     running = False
 
 def input_reader(proc):
     cols, rows = get_term_size()
-    # Move cursor to bottom initially
     sys.stdout.write(f"\033[{rows};3H") 
     sys.stdout.flush()
-    
     while running:
         try:
-            # We use standard input(). 
-            # Because logs print via escape codes that jump away and back,
-            # typing should be mostly uninterrupted visually.
             cmd_in = input()
-            
-            # After pressing enter, input() prints a newline, messing up layout.
-            # We move cursor back up and clear the input line manually.
             sys.stdout.write(f"\033[{rows};0H\033[K\033[1m>\033[0m ")
-            
             if cmd_in.strip():
                 proc.stdin.write(cmd_in + "\n")
                 proc.stdin.flush()
@@ -377,15 +334,12 @@ try:
     
     t_out = threading.Thread(target=output_reader, args=(process,))
     t_head = threading.Thread(target=header_loop)
-    
     t_out.daemon = True
     t_head.daemon = True
-    
     t_out.start()
     t_head.start()
     
     input_reader(process)
-    
     process.wait()
 
 except KeyboardInterrupt:
@@ -394,8 +348,12 @@ except KeyboardInterrupt:
         process.stdin.flush()
         process.wait()
 finally:
+    # 1. Reset the Terminal Scroll Region
     reset_screen()
-    print("Server Stopped.")
+    
+    # 2. CLEAR SCREEN 5 TIMES (As requested)
+    for i in range(5):
+        os.system('clear')
 EOF
 
 # --- 10. Helper Scripts ---
@@ -405,6 +363,8 @@ if command -v python3 &>/dev/null; then
     python3 console.py
 else
     java -Xmx${USER_RAM}M -Xms${USER_RAM}M -jar $SERVER_JAR nogui
+    # Fallback clear if python isn't used
+    for i in {1..5}; do clear; done
 fi
 EOF
 chmod +x run.sh
@@ -426,6 +386,8 @@ chmod +x add-mods.sh
 
 echo "------------------------------------------------"
 echo "INSTALLATION COMPLETE!"
-echo "Folder: $FINAL_FOLDER"
-echo "Run:    ./run.sh"
+echo ""
+echo "To start your server, type this:"
+echo "cd $FINAL_FOLDER"
+echo "./run.sh"
 echo "------------------------------------------------"
