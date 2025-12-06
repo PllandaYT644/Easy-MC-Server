@@ -12,6 +12,10 @@ how to run (make sure u installed git)
 ```
 git clone https://github.com/PllandaYT644/Easy-MC-Server/ && cd Easy-MC-Server && chmod +x easy-mc-server.sh && ./easy-mc-server.sh
 ```
+rerun
+```
+cd ~ && cd Easy-MC-Server && chmod +x easy-mc-server.sh && ./easy-mc-server.sh
+```
 
 how to run server (make sure that you are in the server folder, you can use ls and cd to help with this)
 ```
