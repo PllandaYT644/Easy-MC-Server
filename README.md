@@ -8,14 +8,9 @@ made for people in termux and wants to make a minecraft server
 | Ubuntu  | ❓ Not Tested  |
 | Fedora  | ❓ Not Tested  |
 
-how to get (make sure u installed git)
+how to run (make sure u installed git)
 ```
-git clone https://github.com/PllandaYT644/Easy-MC-Server/ && cd Easy-MC-Server
-```
-
-how to run (make sure that the directory has the file)
-```
-chmod +x easy-mc-server.sh && ./easy-mc-server.sh
+git clone https://github.com/PllandaYT644/Easy-MC-Server/ && cd Easy-MC-Server && chmod +x easy-mc-server.sh && ./easy-mc-server.sh
 ```
 
 how to run server (make sure that you are in the server folder, you can use ls and cd to help with this)
